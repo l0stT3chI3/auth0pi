@@ -6,12 +6,11 @@ const authenticate = require("../Controller/misc/user-auth");
 
 Router.get("/verify/:token", auth.verify);
 Router.get("/user", authenticate, auth.detail);
-Router.get("/logout", auth.logout);
+Router.get("/logout", authenticate, auth.logout);
 
 //POST requests
 Router.post("/signup", auth.signup);
 Router.post("/login", auth.login);
-Router.post("/refreshAuth", auth.refresh);
 Router.post("/forgot/:token", auth.changePassword);
 Router.post("/forgot", auth.forGet);
 Router.post("/reset", authenticate, auth.ResetDetails);

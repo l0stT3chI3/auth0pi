@@ -10,17 +10,14 @@ module.exports = (req, res, next) => {
       jwt.verify(token, process.env.jwt_sign, async (err, User) => {
         if (err) {
           return next(new AppError("token expired", 403));
-        } else if (User) {
-          const loggedStatus = await user.findOne({
-            blacklist: { $all: [token] },
-          });
-          if (loggedStatus) {
-            return next(new AppError("You have logged out buddy"));
-          }
-          req.user = User;
+        }
+
+        const verifiedUser = await user.findOne({ email: User.email });
+        if (verifiedUser.sessionTokens.indexOf(token) >= 0) {
+          req.user = verifiedUser;
           next();
         } else {
-          return next(new AppError("auth failed", 404));
+          return next(new AppError("User logged out"), 401);
         }
       });
     }

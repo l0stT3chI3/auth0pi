@@ -41,13 +41,13 @@ exports.signup = catchAsync(async (req, res, next) => {
   //Hashing the password
   const salt = await bcrypt.genSalt(10);
   const encryptedPassword = await bcrypt.hash(password, salt);
-
+  const uniqueStr = uniqueAuthString();
   //Saving the user in database
   const User = new user({
     username: username,
     email: email,
     password: encryptedPassword,
-    uniqueString: uniqueAuthString(),
+    uniqueString: uniqueStr,
     date: Date.now() + 300000,
   });
 
@@ -58,8 +58,9 @@ exports.signup = catchAsync(async (req, res, next) => {
     message: "User Created!!",
   });
 
-  SendVerificationEmail(uniqueAuthString(), email);
+  SendVerificationEmail(uniqueStr, email);
 });
+
 //Email verification logic
 exports.verify = catchAsync(async (req, res) => {
   const date = Date.now();
@@ -104,16 +105,11 @@ exports.login = catchAsync(async (req, res, next) => {
         const token = jwt.sign({ email: RUser.email }, process.env.jwt_sign, {
           expiresIn: "2h",
         });
-        const refreshToken = jwt.sign(
-          { email: RUser.email },
-          process.env.refresh_sign,
-          {
-            expiresIn: "7d",
-          }
-        );
-        console.log(refreshToken);
-        return res.json({ authorization: token, refreshToken: refreshToken });
-        //return res.send("You are verified");
+
+        RUser.sessionTokens.push(token);
+        RUser.save();
+
+        return res.json({ authorization: token });
       } else {
         return res.send("chal nikl glt password wale");
       }
@@ -123,34 +119,11 @@ exports.login = catchAsync(async (req, res, next) => {
 
 //User retrievng his favourites
 exports.detail = catchAsync(async (req, res, next) => {
-  const userEmail = req.user.email;
-  //const expireToken = await user.findOne({blacklist: {$all: []}})
-  const User = await user.findOne({ email: userEmail });
-  res.send(User.username);
+  let users = req.user;
+  res.send(users.username);
 });
 
 //refreshing the short-lived token
-exports.refresh = catchAsync(async (req, res, next) => {
-  const { refToken, expiredToken } = req.body;
-  jwt.verify(refToken, process.env.refresh_sign, async (err, users) => {
-    if (err) {
-      res.send("Not authenticated");
-    }
-    if (users) {
-      const Token = jwt.sign({ email: users.email }, process.env.jwt_sign, {
-        expiresIn: "2h",
-      });
-      const expire = await user.findOne({ email: users.email });
-      expire.blacklist.push(expiredToken);
-      expire.save();
-      return res.send(Token);
-
-      //res.send("Let me generate you a new token");
-    } else {
-      return res.send("Not authenticated");
-    }
-  });
-});
 
 //forget password route
 exports.forGet = catchAsync(async (req, res, next) => {
@@ -159,7 +132,7 @@ exports.forGet = catchAsync(async (req, res, next) => {
     User = await user.findOne({ email: req.body.userId });
   }
   if (!User) {
-    return next(new AppError("user not found..Plesase login", 403));
+    return next(new AppError("user not found..Plesase signup", 403));
   }
 
   const token = jwt.sign({ userId: User.email }, process.env.forget_sign, {
@@ -183,7 +156,7 @@ exports.changePassword = catchAsync(async (req, res, next) => {
     return next(new AppError("Passwords do not match", 403));
   }
 
-  const findToken = user.findOne({ blacklist: { $all: [token] } });
+  const findToken = await user.findOne({ blacklist: { $all: [token] } });
   if (findToken) {
     return res.send("Token used");
   }
@@ -191,8 +164,9 @@ exports.changePassword = catchAsync(async (req, res, next) => {
     if (err) {
       return res.send("Invalid token");
     }
+    console.log(User);
 
-    const expireToken = user.findOne({ email: User.userId });
+    const expireToken = await user.findOne({ email: User.userId });
 
     expireToken.blacklist.push(token);
     await expireToken.save();
@@ -220,6 +194,7 @@ exports.ResetDetails = catchAsync(async (req, res, next) => {
   if (error) {
     return res.send(error.details[0].message);
   }
+  let users = req.user;
 
   if (!(password && oldEmail)) {
     return next(
@@ -230,9 +205,7 @@ exports.ResetDetails = catchAsync(async (req, res, next) => {
     );
   }
 
-  const User = await user.findOne({ email: oldEmail });
-  console.log(req.user);
-  bcrypt.compare(password, User.password, (err, data) => {
+  bcrypt.compare(password, users.password, (err, data) => {
     if (err) {
       console.log(err);
     }
@@ -240,7 +213,7 @@ exports.ResetDetails = catchAsync(async (req, res, next) => {
       if (neWusername && neWusername.length > 6) {
         user
           .updateOne(
-            { email: User.email },
+            { email: users.email },
             {
               username: neWusername,
             }
@@ -253,7 +226,7 @@ exports.ResetDetails = catchAsync(async (req, res, next) => {
       if (newEmail) {
         user
           .updateOne(
-            { email: User.email },
+            { email: users.email },
             {
               email: newEmail,
             }
@@ -270,13 +243,17 @@ exports.ResetDetails = catchAsync(async (req, res, next) => {
 });
 
 exports.logout = catchAsync(async (req, res, next) => {
-  const { email } = req.body;
-  const User = await user.findOne({ email: email });
   const authToken = req.headers["authorization"].split(" ")[1];
-  const refToken = req.headers["refresh"];
-  User.blacklist.push(authToken);
-  User.blacklist.push(refToken);
+  let users = req.user;
+  let filtered = [];
+  users.sessionTokens.map((el) => {
+    if (el !== authToken) {
+      filtered.push(el);
+    }
+  });
 
-  await User.save();
+  users.sessionTokens = filtered;
+
+  await users.save();
   return res.send("User logged out");
 });
